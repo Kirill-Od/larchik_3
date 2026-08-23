@@ -48,11 +48,45 @@ test('the three-table revenue join returns the real top-3 categories', async () 
 
     assert.deepEqual(body.columns, ['category', 'revenue']);
     assert.deepEqual(body.rows, [
-        { category: 'Электроника', revenue: 19999620 },
-        { category: 'Бытовая техника', revenue: 6426360 },
-        { category: 'Одежда и обувь', revenue: 3446960 }
+        { category: 'Электроника', revenue: 27529610 },
+        { category: 'Бытовая техника', revenue: 8276500 },
+        { category: 'Одежда и обувь', revenue: 4211080 }
     ]);
     assert.equal(body.row_count, 3);
+});
+
+// Homework task 2. `customers.country` is seeded by scripts/seed-extended-data.mjs; the
+// count is pinned because a wrong-but-plausible number is the failure this whole design
+// exists to prevent, and only an exact figure catches it.
+test('the seeded geography answers "how many customers are from Germany"', async () => {
+    const { result, body } = await query({
+        sql: "SELECT COUNT(*) AS n FROM customers WHERE country = 'Germany'"
+    });
+    assert.notEqual(result.isError, true, result.content?.[0]?.text);
+
+    assert.deepEqual(body.rows, [{ n: 24 }]);
+});
+
+// Homework task 3. Asserting the leader alone would pass on a tie, which is the one shape
+// of answer the seed was designed to avoid, so the margin over second place is asserted too.
+test('the seeded geography answers "which country has the most customers"', async () => {
+    const { body } = await query({
+        sql: `SELECT country, COUNT(*) AS n
+              FROM customers
+              GROUP BY country
+              ORDER BY n DESC, country ASC`
+    });
+
+    assert.deepEqual(body.rows.slice(0, 3), [
+        { country: 'Russia', n: 150 },
+        { country: 'Germany', n: 24 },
+        { country: 'France', n: 16 }
+    ]);
+    assert.equal(
+        body.rows.reduce((total, row) => total + row.n, 0),
+        235,
+        'every customer must have a country, or the winner is only a winner among some of them'
+    );
 });
 
 test('a write is refused before it reaches the database', async () => {
@@ -63,10 +97,10 @@ test('a write is refused before it reaches the database', async () => {
 });
 
 test('a query naming a column that does not exist reports SQLite own diagnosis', async () => {
-    const { result } = await query({ sql: 'SELECT country FROM customers' });
+    const { result } = await query({ sql: 'SELECT city FROM customers' });
     assert.equal(result.isError, true);
     assert.match(text(result), /SQL_ERROR/);
-    assert.match(text(result), /no such column: country/);
+    assert.match(text(result), /no such column: city/);
 });
 
 // ---------------------------------------------------------------- pagination

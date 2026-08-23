@@ -255,7 +255,7 @@ test('paths with a single separator and UNC paths are scrubbed too', () => {
 // Over-scrubbing would destroy the diagnostics that make SQL_ERROR worth forwarding.
 test('scrubbing leaves genuine SQLite diagnostics intact', () => {
     const preserved = [
-        'no such column: country',
+        'no such column: city',
         'near "FROM": syntax error',
         'no such table: main.gone',
         'datatype mismatch on 2026/08/23',

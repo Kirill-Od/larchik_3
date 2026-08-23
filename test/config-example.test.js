@@ -85,9 +85,9 @@ test('mcp.config.example.json spawns a server that completes a listTools handsha
         toolJson(result).tables.map(table => [table.name, table.row_count])
     );
     assert.deepEqual(counts, {
-        customers: 150,
+        customers: 235,
         products: 50,
-        orders: 750,
-        order_items: 1900
+        orders: 960,
+        order_items: 2429
     });
 });

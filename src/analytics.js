@@ -154,12 +154,13 @@ function assertDate(db, label, value) {
 /**
  * Revenue per day, month or year.
  *
- * The empty range is the behaviour that matters (F2). There are no orders in 2025 in this
- * data — order_date runs 2026-02-17 to 2026-08-22 — and homework task 7 asks for 2025
- * revenue. Throwing would read as a malfunction and invite a retry; returning a bare empty
- * list would cost a turn. So the result always carries the range the data actually spans,
- * formatted exactly as start_date and end_date accept it, and the note says the requested
- * range was empty. Both are what let the agent answer "zero, and here is why" in one turn.
+ * The empty range is the behaviour that matters (F2). It was written when this data had no
+ * orders in 2025 at all and homework task 7 asked for 2025 revenue; scripts/seed-extended-data.mjs
+ * has since given 2025 orders, but any range outside 2025-09-01 … 2026-08-22 still lands here.
+ * Throwing would read as a malfunction and invite a retry; returning a bare empty list would
+ * cost a turn. So the result always carries the range the data actually spans, formatted
+ * exactly as start_date and end_date accept it, and the note says the requested range was
+ * empty. Both are what let the agent answer "zero, and here is why" in one turn.
  */
 export function revenueByPeriod(
     db,

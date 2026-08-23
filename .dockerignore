@@ -10,6 +10,7 @@ Dockerfile
 # Development-only material; the image only needs to run the server.
 test/
 tasks/
+scripts/
 homework.md
 .claude/
 

@@ -48,7 +48,23 @@ Discovered while planning:
 
 Each was verified directly against `shop.db` with the `sqlite3` CLI.
 
+**Superseded in part by the data extension (after the project was green).** The owner
+decided to close the two gaps these findings are built on rather than keep answering
+"the schema cannot say": `scripts/seed-extended-data.mjs` adds `customers.country`, 85
+non-Russian customers and 210 orders dated 2025. Every *number* in F1, F2, F5, F6 and F7
+below is therefore the pre-extension measurement, kept as the record of what the provided
+data contained; the current figures live in README → "Known data limitations" and "The
+eight homework questions". The *mechanisms* the findings prescribe all survive — the
+schema is still discoverable, `no such column` is still enriched (`city` is the live case
+now), an empty date range still returns the available span, and `include_cancelled` still
+changes the ranking.
+
 ### F1 — There is no country column anywhere. Homework tasks 2 and 3 are unanswerable.
+
+**Superseded: `customers.country` now exists and both tasks are answerable (Germany 24;
+Russia leads with 150 of 235).** The "do not seed one" instruction below was the right call
+while the data was untouched and was overruled deliberately, not forgotten; what replaced it
+is a generated dataset that is labelled as generated everywhere it appears.
 
 Evidence — the full schema is:
 
@@ -75,6 +91,10 @@ to make the truth *discoverable* so the agent answers honestly instead of halluc
    sees the honest answer was designed for, not a bug.
 
 ### F2 — No orders exist in 2025. The answer to homework task 7 is zero.
+
+**Superseded: 2025 revenue is 8 990 280.00 across 183 non-cancelled orders.** `order_date`
+now spans 2025-09-01 to 2026-08-22. The empty-range mechanism still matters and is still
+tested — 2024 is the year with no orders now.
 
 Evidence: `MIN(order_date)=2026-02-17 18:53:30`, `MAX(order_date)=2026-08-22 17:06:30`.
 Grouped by year, `orders` has exactly one bucket: 2026, 750 orders, 32 792 060.00 total.
@@ -139,6 +159,10 @@ entirely disabled.
 
 ### F5 — The dataset is internally consistent, so both revenue routes agree.
 
+**Still true, on 960 orders rather than 750; the named spenders below have moved.** The
+seeding script preserves the consistency by construction. Current top spender: Екатерина
+Харитонов, 859 460.00 excluding cancelled.
+
 `orders.total_amount` equals `SUM(order_items.quantity * unit_price)` for all 750 orders
 (0 mismatches); every order has items; every `order_items.unit_price` equals the current
 `products.price`. Consequence: the agent gets the same revenue whether it aggregates
@@ -158,6 +182,9 @@ Response: the server does not pick for the agent. `describe_table('orders')` rep
 The agent is then able to state its assumption, which is the correct behaviour.
 
 ### F6 — "Best-selling" is ambiguous and the two readings give different answers.
+
+**Still true, with different products: revenue leader Ноутбук UltraBook 15 (98 units,
+8 819 020.00), unit leader Планшет Tab 10 (123 units, 4 303 770.00).**
 
 **Corrected in slice 6 — the original numbers were the include-cancelled basis, and the
 named products were wrong.** Re-measured directly, and confirmed independently by the
@@ -180,6 +207,9 @@ figures differ by a factor of sixty. Response:
 takes a `rank_by` parameter — which is what homework task 5 asks for anyway.
 
 ### F7 — Ground truth for the remaining tasks (for README and for assertions).
+
+**Superseded wholesale — these are the pre-extension figures.** Current ground truth for
+all eight questions is the table in README → "The eight homework questions".
 
 - Task 1: 4 tables — customers (150), products (50), orders (750), order_items (1900).
 - Task 6, top-3 categories by revenue — **the figures below are the INCLUDING-cancelled

@@ -175,7 +175,7 @@ const IDENTIFIER_INJECTIONS = [
  * which fails the homework just as surely as one that permits a write.
  */
 const ALLOWED = [
-    ['a real aggregate still answers', 'SELECT COUNT(*) AS n FROM orders', [{ n: 750 }]],
+    ['a real aggregate still answers', 'SELECT COUNT(*) AS n FROM orders', [{ n: 960 }]],
     [
         '22 a verb inside a string literal',
         "SELECT * FROM products WHERE name = 'DROP TABLE orders'",

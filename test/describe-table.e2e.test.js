@@ -40,17 +40,18 @@ test('describe_table is advertised alongside list_tables', async () => {
     }
 });
 
-// F1: there is no geography column anywhere. The agent must be able to see that, so the
-// absence is asserted directly — not merely that six names happen to be present.
-test('describe_table(customers) returns exactly the six real columns and no country', async () => {
+// `country` was seeded by scripts/seed-extended-data.mjs and homework tasks 2 and 3 depend
+// on it, so it must be discoverable. The finer geography the data still does not have must
+// stay absent: an agent that reads `city` here would invent a breakdown nothing supports.
+test('describe_table(customers) returns exactly the seven real columns, country included', async () => {
     const { result, body } = await describe('customers');
     assert.notEqual(result.isError, true, result.content?.[0]?.text);
 
     const names = body.columns.map(c => c.name);
-    assert.deepEqual(names, ['id', 'first_name', 'last_name', 'email', 'phone', 'created_at']);
-    assert.ok(!names.includes('country'), 'a country column must not be invented');
-    assert.ok(!names.includes('city'));
-    assert.ok(!JSON.stringify(body).toLowerCase().includes('country'));
+    assert.deepEqual(names, ['id', 'first_name', 'last_name', 'email', 'phone', 'created_at', 'country']);
+    assert.ok(!names.includes('city'), 'a city column must not be invented');
+    assert.ok(!names.includes('address'));
+    assert.ok(!JSON.stringify(body).toLowerCase().includes('city'));
 });
 
 test('describe_table(customers) reports column type, nullability and primary key', async () => {
@@ -62,27 +63,51 @@ test('describe_table(customers) reports column type, nullability and primary key
     assert.equal(byName.first_name.not_null, true);
 });
 
-// The sample rows are what let the agent conclude "these are Russian phone numbers, there
-// is no geography data here" instead of guessing. Asserting a count would not prove that.
-test('describe_table(customers) sample rows show real +79 phone numbers', async () => {
+// The sample rows are what let the agent see that country and phone agree rather than
+// guessing at either. The first three rows are provided customers, so they are the Russian
+// ones; asserting a count would not prove the two columns are coherent.
+test('describe_table(customers) sample rows show a +79 phone against country Russia', async () => {
     const { body } = await describe('customers');
 
     assert.equal(body.sample_rows.length, 3);
     for (const row of body.sample_rows) {
         assert.match(row.phone, /^\+79\d+$/, `expected a +79 phone, got ${row.phone}`);
+        assert.equal(row.country, 'Russia', `a +79 phone must not sit against ${row.country}`);
         assert.ok(row.email.includes('@'));
     }
 });
 
-// F2: orders exist only in 2026, so "revenue in 2025" is zero. The sample rows are how the
-// agent finds that out before writing a query against the wrong year.
-test('describe_table(orders) sample rows show 2026 order dates', async () => {
+// The samples are the first three rows in storage order, which for `orders` are all 2026
+// while a fifth of the table is 2025. The documented path to a date question runs through
+// describe_table, so an agent that reads coverage off three rows answers zero for 2025 —
+// the exact hallucination the rest of this design exists to prevent. The payload therefore
+// has to disown the reading, in `note`, where the agent gets it without a second call.
+test('describe_table(orders) disowns its sample rows as evidence of which years exist', async () => {
     const { body } = await describe('orders');
 
     assert.equal(body.sample_rows.length, 3);
     for (const row of body.sample_rows) {
         assert.match(row.order_date, /^2026-/, `expected a 2026 order_date, got ${row.order_date}`);
     }
+    // Precondition: with no rows outside the sampled year the warning would be pedantry.
+    assert.ok(body.row_count > 900, `only ${body.row_count} orders`);
+
+    assert.match(body.note, /first 3 rows in storage order/i, body.note);
+    assert.match(body.note, /not a representative sample/i, body.note);
+    assert.match(body.note, /do not infer date ranges/i, body.note);
+});
+
+// The whole table fitting in the sample is the one case where the samples ARE the coverage,
+// and a warning there would teach the agent to distrust a payload it can trust.
+test('a table smaller than the sample carries no not-representative warning', async () => {
+    const { body } = await describe('base', { dbPath: viewFixture() });
+
+    assert.equal(body.row_count, 2);
+    assert.equal(body.sample_rows.length, 2);
+    assert.ok(
+        !/representative/.test(body.note ?? ''),
+        `the sample is the whole table, so nothing needs disowning: ${body.note}`
+    );
 });
 
 // The five status values exist only inside the CHECK constraint in the DDL. Without this,

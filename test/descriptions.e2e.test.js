@@ -63,6 +63,38 @@ test('describe_table tells the agent to confirm a column before querying it', as
     });
 });
 
+// The description used to promise the samples reveal "which years and formats it really
+// covers". Half of that was false the moment 2025 orders were seeded behind the first three
+// rows, and it is the half an agent acts on.
+test('describe_table does not sell its sample rows as evidence of coverage', async () => {
+    await withTools(tools => {
+        const { description } = tools.find(t => t.name === 'describe_table');
+
+        assert.match(description, /NOT A REPRESENTATIVE SAMPLE/);
+        assert.match(description, /never\s+read coverage off them/i);
+        assert.ok(!/years and formats it really covers/.test(description), description);
+        // Disowning a reading is only half a fix; the agent needs the route that does work.
+        assert.match(description, /MIN\/MAX/);
+        assert.match(description, /available_range/);
+    });
+});
+
+// Measured on the committed database: `WHERE order_date < '2026'` matches 0 of 960 rows and
+// `>= '2026'` matches all 960, because DATETIME carries NUMERIC affinity and the bare year
+// is coerced to an integer that every stored text date compares greater than. It returns a
+// confident, wrong, zero — and only run_sql_query is exposed, since the analytics tools wrap
+// the column in date().
+test('run_sql_query warns that a bare-year literal silently matches nothing', async () => {
+    await withTools(tools => {
+        const { description } = tools.find(t => t.name === 'run_sql_query');
+
+        assert.match(description, /NUMERIC affinity/);
+        assert.match(description, /matches nothing at all/);
+        assert.match(description, /2026-01-01/);
+        assert.match(description, /strftime|date\(order_date\)/);
+    });
+});
+
 test('list_tables tells the agent to call it first', async () => {
     await withTools(tools => {
         assert.match(tools.find(t => t.name === 'list_tables').description, /call this first/i);

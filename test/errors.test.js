@@ -43,7 +43,7 @@ test('a path is scrubbed wherever it sits in the message', () => {
 
 // Over-scrubbing would destroy the diagnostics that make SQL_ERROR worth forwarding at all.
 const PRESERVED = [
-    'no such column: country',
+    'no such column: city',
     'near "FROM": syntax error',
     'near "/": syntax error',
     'no such table: main.gone',

@@ -133,34 +133,34 @@ test('the top spender and their totals are the real ones, cancelled orders exclu
 
     assert.equal(include_cancelled, false, 'excluding cancelled orders is the default');
     assert.deepEqual(customers[0], {
-        name: 'Дмитрий Харитонов',
-        email: 'dmitriy.kharitonov845@mail.ru',
-        total_spent: 701780,
-        order_count: 8
+        name: 'Екатерина Харитонов',
+        email: 'ekaterina.kharitonov777@gmail.com',
+        total_spent: 859460,
+        order_count: 11
     });
     assert.equal(customers.length, 10, 'the default limit is 10');
 });
 
-// F5's whole point: the parameter exists because it changes the answer. Third place is
-// where the two bases disagree, so asserting first place alone would pass either way.
-test('including cancelled orders raises the totals and reorders third place', () => {
+// F5's whole point: the parameter exists because it changes the answer. Second and third
+// place swap between the two bases, so asserting first place alone would pass either way.
+test('including cancelled orders raises the totals and reorders the runners-up', () => {
     const excluded = topCustomersBySpend(shop, { limit: 3 });
     const included = topCustomersBySpend(shop, { limit: 3, includeCancelled: true });
 
     assert.deepEqual(
         excluded.customers.map(c => [c.name, c.total_spent]),
         [
+            ['Екатерина Харитонов', 859460],
             ['Дмитрий Харитонов', 701780],
-            ['София Федоров', 636790],
-            ['Дмитрий Андреев', 603380]
+            ['Наталья Петрова', 690950]
         ]
     );
     assert.deepEqual(
         included.customers.map(c => [c.name, c.total_spent]),
         [
-            ['Дмитрий Харитонов', 785750],
-            ['София Федоров', 713000],
-            ['Алексей Новиков', 648980]
+            ['Екатерина Харитонов', 885420],
+            ['Наталья Петрова', 876900],
+            ['Дмитрий Харитонов', 785750]
         ]
     );
     assert.equal(included.include_cancelled, true);
@@ -259,14 +259,14 @@ test('ranking by revenue and ranking by units disagree about the best seller', (
     assert.deepEqual(byRevenue.products[0], {
         name: 'Ноутбук UltraBook 15',
         category: 'Электроника',
-        units_sold: 73,
-        revenue: 6569270
+        units_sold: 98,
+        revenue: 8819020
     });
     assert.deepEqual(byUnits.products[0], {
-        name: 'Эспандер плечевой',
-        category: 'Спорт и отдых',
-        units_sold: 93,
-        revenue: 110670
+        name: 'Планшет Tab 10',
+        category: 'Электроника',
+        units_sold: 123,
+        revenue: 4303770
     });
 });
 
@@ -282,29 +282,43 @@ test('units_sold and revenue come back on every row whichever metric ranks', () 
         }
     }
     const byUnits = topProductsBySales(shop, { limit: 3, rankBy: 'units' });
-    assert.deepEqual(byUnits.products.map(p => p.units_sold), [93, 92, 84], 'not ordered by units');
+    assert.deepEqual(byUnits.products.map(p => p.units_sold), [123, 117, 111], 'not ordered by units');
 });
 
+// The two bases agree on which product earns the most, so a top-1 assertion would pass
+// whatever include_cancelled did. Second and third place are where they disagree.
 test('cancelled orders change the product ranking too', () => {
-    const included = topProductsBySales(shop, { limit: 1, rankBy: 'units', includeCancelled: true });
+    const excluded = topProductsBySales(shop, { limit: 3 });
+    const included = topProductsBySales(shop, { limit: 3, includeCancelled: true });
 
+    assert.deepEqual(excluded.products.map(p => p.name), [
+        'Ноутбук UltraBook 15',
+        'Планшет Tab 10',
+        'Смартфон Galaxy S21'
+    ]);
+    assert.deepEqual(included.products.map(p => p.name), [
+        'Ноутбук UltraBook 15',
+        'Смартфон Galaxy S21',
+        'Планшет Tab 10'
+    ]);
     assert.deepEqual(included.products[0], {
-        name: 'Увлажнитель воздуха AirFresh',
-        category: 'Бытовая техника',
-        units_sold: 109,
-        revenue: 467610
+        name: 'Ноутбук UltraBook 15',
+        category: 'Электроника',
+        units_sold: 113,
+        revenue: 10168870
     });
 });
 
 // ---------------------------------------------------- revenue_by_period (F2)
 
-test('grouping by year finds the single year this data actually covers', () => {
+test('grouping by year finds both years this data covers', () => {
     const { buckets, available_range } = revenueByPeriod(shop, { groupBy: 'year' });
 
     assert.deepEqual(buckets, [
+        { period: '2025', revenue: 8990280, order_count: 183, items_sold: 912 },
         { period: '2026', revenue: 28134150, order_count: 648, items_sold: 3295 }
     ]);
-    assert.deepEqual(available_range, { min_order_date: '2026-02-17', max_order_date: '2026-08-22' });
+    assert.deepEqual(available_range, { min_order_date: '2025-09-01', max_order_date: '2026-08-22' });
 });
 
 test('grouping by month returns every month in order with its own revenue', () => {
@@ -313,6 +327,10 @@ test('grouping by month returns every month in order with its own revenue', () =
     assert.deepEqual(
         buckets.map(b => [b.period, b.revenue]),
         [
+            ['2025-09', 1660710],
+            ['2025-10', 2098970],
+            ['2025-11', 2407470],
+            ['2025-12', 2823130],
             ['2026-02', 1502350],
             ['2026-03', 4347380],
             ['2026-04', 2981970],
@@ -320,9 +338,10 @@ test('grouping by month returns every month in order with its own revenue', () =
             ['2026-06', 4285410],
             ['2026-07', 4660750],
             ['2026-08', 4711800]
-        ]
+        ],
+        'January 2026 has no orders and must not appear as an empty bucket'
     );
-    assert.deepEqual(buckets[0], { period: '2026-02', revenue: 1502350, order_count: 42, items_sold: 195 });
+    assert.deepEqual(buckets[0], { period: '2025-09', revenue: 1660710, order_count: 31, items_sold: 139 });
 });
 
 test('a start and end date bound the buckets inclusively at both ends', () => {
@@ -339,23 +358,45 @@ test('a start and end date bound the buckets inclusively at both ends', () => {
     ]);
 });
 
-// F2 and homework task 7. There are no orders in 2025, so the honest answer is zero — and
-// an empty list alone would cost the agent a turn. The available range is what lets it
-// answer the user specifically instead of guessing or retrying.
-test('a range with no orders returns empty buckets carrying the real available range', () => {
+// Homework task 7. 2025 used to be the empty year; scripts/seed-extended-data.mjs gave it
+// orders, so this is now the figure the agent must come back with.
+test('2025 revenue is a real figure, not an empty range', () => {
     const result = revenueByPeriod(shop, {
         groupBy: 'year',
         startDate: '2025-01-01',
         endDate: '2025-12-31'
     });
 
+    assert.deepEqual(result.buckets, [
+        { period: '2025', revenue: 8990280, order_count: 183, items_sold: 912 }
+    ]);
+    assert.deepEqual(
+        revenueByPeriod(shop, {
+            groupBy: 'year',
+            startDate: '2025-01-01',
+            endDate: '2025-12-31',
+            includeCancelled: true
+        }).buckets,
+        [{ period: '2025', revenue: 10906130, order_count: 210, items_sold: 1047 }]
+    );
+});
+
+// F2's mechanism outlived the gap that motivated it: an empty list alone would cost the
+// agent a turn, so the available range rides along. 2024 is now the year with no orders.
+test('a range with no orders returns empty buckets carrying the real available range', () => {
+    const result = revenueByPeriod(shop, {
+        groupBy: 'year',
+        startDate: '2024-01-01',
+        endDate: '2024-12-31'
+    });
+
     assert.deepEqual(result.buckets, []);
     assert.deepEqual(result.available_range, {
-        min_order_date: '2026-02-17',
+        min_order_date: '2025-09-01',
         max_order_date: '2026-08-22'
     });
     assert.match(result.note, /no orders in the requested range/i);
-    assert.match(result.note, /2026-02-17/);
+    assert.match(result.note, /2025-09-01/);
     assert.match(result.note, /2026-08-22/);
 });
 
@@ -390,12 +431,11 @@ test('a real leap day is accepted', () => {
     const { buckets } = revenueByPeriod(shop, {
         groupBy: 'day',
         startDate: '2024-02-29',
-        endDate: '2026-02-18'
+        endDate: '2025-09-01'
     });
 
     assert.deepEqual(buckets, [
-        { period: '2026-02-17', revenue: 61840, order_count: 2, items_sold: 6 },
-        { period: '2026-02-18', revenue: 590770, order_count: 10, items_sold: 63 }
+        { period: '2025-09-01', revenue: 102530, order_count: 3, items_sold: 7 }
     ]);
 });
 

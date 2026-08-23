@@ -113,22 +113,22 @@ test('top_customers_by_spend returns the real spenders as validated structured c
         const { result, body } = await call(client, 'top_customers_by_spend', { limit: 3 });
 
         assert.deepEqual(body.customers[0], {
-            name: 'Дмитрий Харитонов',
-            email: 'dmitriy.kharitonov845@mail.ru',
-            total_spent: 701780,
-            order_count: 8
+            name: 'Екатерина Харитонов',
+            email: 'ekaterina.kharitonov777@gmail.com',
+            total_spent: 859460,
+            order_count: 11
         });
         assert.deepEqual(body.customers.map(c => c.name), [
+            'Екатерина Харитонов',
             'Дмитрий Харитонов',
-            'София Федоров',
-            'Дмитрий Андреев'
+            'Наталья Петрова'
         ]);
         assert.equal(body.include_cancelled, false);
         assert.deepEqual(result.structuredContent, body, 'the output schema is not being filled');
     });
 });
 
-test('including cancelled orders through the tool boundary changes third place', async () => {
+test('including cancelled orders through the tool boundary reorders the runners-up', async () => {
     await withServer(undefined, async client => {
         const { body } = await call(client, 'top_customers_by_spend', {
             limit: 3,
@@ -136,9 +136,9 @@ test('including cancelled orders through the tool boundary changes third place',
         });
 
         assert.deepEqual(body.customers.map(c => [c.name, c.total_spent]), [
-            ['Дмитрий Харитонов', 785750],
-            ['София Федоров', 713000],
-            ['Алексей Новиков', 648980]
+            ['Екатерина Харитонов', 885420],
+            ['Наталья Петрова', 876900],
+            ['Дмитрий Харитонов', 785750]
         ]);
     });
 });
@@ -151,21 +151,21 @@ test('top_products_by_sales ranks by the requested metric and reports both', asy
         assert.deepEqual(byRevenue.body.products[0], {
             name: 'Ноутбук UltraBook 15',
             category: 'Электроника',
-            units_sold: 73,
-            revenue: 6569270
+            units_sold: 98,
+            revenue: 8819020
         });
         assert.deepEqual(byUnits.body.products[0], {
-            name: 'Эспандер плечевой',
-            category: 'Спорт и отдых',
-            units_sold: 93,
-            revenue: 110670
+            name: 'Планшет Tab 10',
+            category: 'Электроника',
+            units_sold: 123,
+            revenue: 4303770
         });
     });
 });
 
-// Homework task 7 asks for 2025 revenue, and the honest answer is zero. This is the call
-// that has to hand the agent enough to say so specifically.
-test('revenue_by_period for 2025 returns no buckets and the 2026 range it does have', async () => {
+// Homework task 7 asks for 2025 revenue. It used to be zero for want of data; since
+// scripts/seed-extended-data.mjs it is a real figure, and this is the call that produces it.
+test('revenue_by_period for 2025 returns the seeded figure through the tool boundary', async () => {
     await withServer(undefined, async client => {
         const { body } = await call(client, 'revenue_by_period', {
             group_by: 'year',
@@ -173,21 +173,42 @@ test('revenue_by_period for 2025 returns no buckets and the 2026 range it does h
             end_date: '2025-12-31'
         });
 
-        assert.deepEqual(body.buckets, []);
+        assert.deepEqual(body.buckets, [
+            { period: '2025', revenue: 8990280, order_count: 183, items_sold: 912 }
+        ]);
         assert.deepEqual(body.available_range, {
-            min_order_date: '2026-02-17',
+            min_order_date: '2025-09-01',
             max_order_date: '2026-08-22'
         });
-        assert.match(body.note, /revenue for it is zero/);
-        assert.match(body.note, /2026-02-17 to 2026-08-22/);
     });
 });
 
-test('revenue_by_period without a range buckets the year that exists', async () => {
+// The empty-range answer is still the behaviour that matters — 2024 is now the year that
+// has no orders — and an empty list on its own would cost the agent a turn.
+test('revenue_by_period for a year with no orders says so and names the range there is', async () => {
+    await withServer(undefined, async client => {
+        const { body } = await call(client, 'revenue_by_period', {
+            group_by: 'year',
+            start_date: '2024-01-01',
+            end_date: '2024-12-31'
+        });
+
+        assert.deepEqual(body.buckets, []);
+        assert.deepEqual(body.available_range, {
+            min_order_date: '2025-09-01',
+            max_order_date: '2026-08-22'
+        });
+        assert.match(body.note, /revenue for it is zero/);
+        assert.match(body.note, /2025-09-01 to 2026-08-22/);
+    });
+});
+
+test('revenue_by_period without a range buckets both years that exist', async () => {
     await withServer(undefined, async client => {
         const { body } = await call(client, 'revenue_by_period', { group_by: 'year' });
 
         assert.deepEqual(body.buckets, [
+            { period: '2025', revenue: 8990280, order_count: 183, items_sold: 912 },
             { period: '2026', revenue: 28134150, order_count: 648, items_sold: 3295 }
         ]);
     });

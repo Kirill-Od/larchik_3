@@ -226,7 +226,61 @@ Ask the agent:
 > Show me all available tables and explain what information each table contains.
 
 It should call `list_tables`, then `describe_table` for each of the four tables, and come
-back with customers (150 rows), products (50), orders (750), order_items (1900).
+back with customers (235 rows), products (50), orders (960), order_items (2429). Part of
+that is generated — see [Known data limitations](#known-data-limitations) for exactly which
+part and why.
+
+### Verified end to end with a live agent
+
+Beyond the automated suite, the server was driven by a real agent (headless Claude Code
+connecting through `.mcp.json`) rather than only by test harnesses. Three results worth
+reproducing, because each demonstrates something a passing test cannot.
+
+**This run predates `scripts/seed-extended-data.mjs`**, so it was made against the original
+150-customer, 750-order dataset. The refusal is unaffected by the seeding and reproduces
+identically today; the two figures the agent quoted are pre-seed figures and are marked
+where they have since moved.
+
+**It refuses the destructive request from the assignment.** Asked to delete cancelled
+orders, the agent reported back verbatim:
+
+```
+READ_ONLY_VIOLATION: read-only guard: DELETE is not permitted on a read-only
+connection. Read the same rows instead: SELECT * FROM orders WHERE status = 'cancelled'
+```
+
+`shop.db` hashed identically before and after.
+
+**It answered the 2025 question honestly instead of inventing a figure.** Asked cold about
+2025 revenue, with no hint that the data might not contain it:
+
+> There is no 2025 data. Every order falls in 2026 — 2026-02-17 to 2026-08-22. Revenue for
+> 2025 is therefore zero, not an unknown.
+
+That distinction — zero rather than unknown — is the behaviour this design exists to
+produce, and it is the reason the seeding that followed was done in the open: the same
+question now returns **8 990 280.00**, and this README says where those orders came from
+rather than letting them pass as part of the provided dataset.
+
+**It found a tie in the data on its own.** Asked who placed the most orders, it returned
+София Яковлев with 15 and volunteered that Виктория Макаров and Мария Иванов are tied at
+11 behind her — a detail nobody had put in front of it. She still leads after the seeding,
+now with 16 orders excluding cancelled.
+
+### In a container
+
+The image was built and driven the same way, with the documented command:
+
+```bash
+docker build -t shop-db-mcp .
+docker run -i --rm shop-db-mcp
+```
+
+All six tools appear, `SELECT COUNT(*) FROM orders WHERE status <> 'cancelled'` returned
+648 — 750 − 102 in the pre-seed database; against the database as committed today the same
+query returns **831** — and the `DELETE` above is refused identically. The `-t` warning below is not folklore:
+run with `-it` and the TTY echoes your own request back down the stream, so the client
+parses its own `initialize` as if it were the server's reply.
 
 ---
 
@@ -377,7 +431,7 @@ correct:
 | Code | When | What the message adds |
 |---|---|---|
 | `READ_ONLY_VIOLATION` | The guard refused the statement | Names the construct found and restates the rule |
-| `SQL_ERROR` | SQLite rejected the query | SQLite's own diagnostic (`no such column: country`), enriched with the columns or tables that *do* exist |
+| `SQL_ERROR` | SQLite rejected the query | SQLite's own diagnostic (`no such column: city`), enriched with the columns or tables that *do* exist |
 | `INVALID_ARGUMENT` | A parameter is out of range or malformed | States the accepted values |
 | `QUERY_TIMEOUT` | The query ran past the deadline | Explains how to narrow it |
 | `CONFIGURATION_ERROR` | The database could not be opened | Names `SHOP_DB_PATH` |
@@ -404,7 +458,7 @@ all:
 /home/user/Документы/моя папка/shop.db   ->  <database>
 /a b c d/e f/shop.db                       ->  <database>
 C:\Users\Kirio\My Documents\shop.db        ->  <database>
-no such column: country                    ->  unchanged
+no such column: city                       ->  unchanged
 near "/": syntax error                     ->  unchanged
 2026/08/23 and a/b                         ->  unchanged
 ```
@@ -479,56 +533,94 @@ docker run -i --rm -v /host/path/shop.db:/shop.db:ro shop-db-mcp
 
 ## Known data limitations
 
-This section exists because two of the eight homework questions **cannot be answered from
-this database**, and one has the surprising answer *zero*. The server is built so the agent
-discovers that and says so, rather than inventing a plausible number. Documenting it here
-means a reader can tell the honest answer was designed for rather than being a bug.
+Read this before trusting any figure below. **Part of this database is generated**, and the
+two paragraphs after the next heading say exactly which part — nothing here is presented as
+having come with the assignment when it did not.
 
-### 1. There is no `country` column — anywhere
+### 0. Which rows are provided and which are generated
 
-The complete schema is:
+The dataset that shipped with the assignment could not answer three of its own eight
+questions: it had no geography column at all (tasks 2 and 3) and every one of its 750
+orders fell in 2026 (task 7). The owner chose to extend the data rather than answer "the
+schema cannot say" three times. That extension is one committed script,
+[`scripts/seed-extended-data.mjs`](scripts/seed-extended-data.mjs), and it is the only
+thing that has ever written to `shop.db`.
 
-```
-customers    (id, first_name, last_name, email, phone, created_at)
-products     (id, name, category, price, stock_quantity, created_at)
-orders       (id, customer_id, order_date, status, total_amount)
-order_items  (id, order_id, product_id, quantity, unit_price)
-```
+| Rows | Origin |
+|---|---|
+| `products`, all 50 | **Provided**, untouched |
+| `customers` 1–150 | **Provided**, untouched apart from `country` below |
+| `customers.country` | **Added** as a new column. The 150 provided customers all have Russian names and `+79…` phones, so they are backfilled to `Russia` — a reading of the provided data, not an invention |
+| `customers` 151–235 | **Generated** — 85 customers from seven other countries |
+| `orders` 1–750, all dated **2026**, and their 1900 `order_items` | **Provided**, untouched |
+| `orders` 751–960, all dated **2025**, and their 529 `order_items` | **Generated** |
 
-No `country`, `city`, `address`, `region` or any other geography column exists on any
-table. All 150 customers have Russian names and `+79…` phone numbers, and nothing records
-where any of them is.
+Two predicates separate the halves cleanly: `customers.id > 150` and
+`orders.order_date < '2026-01-01'`. No provided row was modified and no 2026 order was
+touched, so every figure this project ever measured about 2026 is still exactly what the
+provided data says.
 
-So homework **task 2** ("How many customers are from Germany?") and **task 3** ("Which
-country has the most customers?") are unanswerable, and the **correct** agent behaviour is
-to say so and name what is missing. Three mechanisms push it there:
+The script is deterministic — a fixed PRNG seed, explicit primary keys, and a
+delete-then-insert of exactly those two groups — so `node scripts/seed-extended-data.mjs`
+can be re-run and reproduces the same rows, and the numbers quoted in this README stay
+true. It re-checks fourteen invariants on every run and exits non-zero if any fails, and
+`test/data-invariants.test.js` re-runs that same list against the committed `shop.db` — so
+they are a property of the file in the repository, not just of the run that produced it. It
+also refuses to touch any database it cannot identify as this one, and does its deletes and
+inserts in a single transaction, so an interrupted run leaves the file exactly as it was.
 
-1. `describe_table('customers')` returns the six real columns and three sample rows, so the
-   agent sees `+79…` phones and no geography.
-2. `SELECT country FROM customers` fails with `no such column: country` **enriched with the
-   real column list** — one failed call becomes a self-correcting one.
-3. The server's `instructions`, sent at initialize, tell the agent to state plainly what is
-   missing when the schema cannot answer a question rather than guessing.
+Two coherence rules were followed, because incoherent filler is worse than the honest gap
+it replaces:
 
-No country column was invented or seeded to make the question go away.
+- **Name, phone country code, email domain and country agree on every row.** A German
+  customer is `Ben Weber`, `+49151…`, `ben.weber143@freenet.de`, `Germany`. A Russian name
+  against a `+79` phone and `Brazil` would be spotted instantly.
+- **No generated order predates what it depends on.** In the provided data the catalogue
+  begins on 2025-08-24 (only 5 of 50 products exist before September) and the earliest
+  customer registered on 2025-08-22, so the generated orders start on 2025-09-01, each one
+  drawing only from products already created on its date and belonging to a customer
+  already registered on its date. That is why 2025 revenue lives in September–December and
+  not in January.
 
-### 2. There are no orders in 2025 — and there is a trap
+### 1. Geography exists at country level and no finer
 
-`orders.order_date` spans **2026-02-17 18:53:30 to 2026-08-22 17:06:30**. Every one of the
-750 orders falls in 2026. Homework **task 7** asks for 2025 revenue; the answer is **0**.
+`customers.country` is the only geography column. There is still no `city`, `address` or
+`region`, so `SELECT city FROM customers` fails with `no such column: city` enriched with
+the real column list — the same self-correcting refusal that used to catch `country`.
 
-The trap is that 2025 dates *do* exist in this database, just not on orders:
+| Country | Customers | Origin |
+|---|---|---|
+| Russia | 150 | provided |
+| Germany | 24 | generated |
+| France | 16 | generated |
+| United Kingdom | 13 | generated |
+| Italy | 11 | generated |
+| Spain | 9 | generated |
+| Poland | 7 | generated |
+| Netherlands | 5 | generated |
+
+235 in total, no NULLs, and no tie anywhere near the top: Russia leads Germany 150 to 24,
+so homework task 3 has one unambiguous answer.
+
+### 2. Orders span 2025-09 to 2026-08 with a gap in the middle — and the date trap remains
+
+`orders.order_date` now runs **2025-09-01 11:19:14 to 2026-08-22 17:06:30**. It is not
+continuous: the generated orders stop on 2025-12-31 and the provided ones begin on
+2026-02-17, so **January 2026 has no orders at all** and a monthly breakdown skips it
+rather than showing a zero row.
+
+The trap that motivated `revenue_by_period` is unchanged — two of the three date columns in
+this database are not sales dates:
 
 | Column | Range | What it means |
 |---|---|---|
-| `orders.order_date` | 2026-02-17 → 2026-08-22 | when a sale happened |
+| `orders.order_date` | 2025-09-01 → 2026-08-22 | when a sale happened |
 | `customers.created_at` | 2025-08-22 → 2026-02-17 | when a customer registered |
 | `products.created_at` | 2025-08-24 → 2025-11-19 | when a product was added to the catalogue |
 
-An agent that joins on the wrong date column finds plenty of 2025 "activity" and reports
-revenue that no sale ever produced. `revenue_by_period`'s description says which column it
-buckets on and why, and an empty range comes back with the actual available span attached
-rather than as an error.
+An agent that joins on the wrong column still reports revenue no sale ever produced.
+`revenue_by_period` says which column it buckets on, and an empty range (2024, say) comes
+back with the actual available span attached rather than as an error.
 
 ### 3. "Best-selling" is ambiguous and the two readings name different products
 
@@ -536,26 +628,30 @@ On the default basis (cancelled orders excluded):
 
 | Ranking | Leader | Units | Revenue |
 |---|---|---|---|
-| **By revenue** | Ноутбук UltraBook 15 | 73 | 6 569 270.00 |
-| **By units** | Эспандер плечевой | 93 | 110 670.00 |
+| **By revenue** | Ноутбук UltraBook 15 | 98 | 8 819 020.00 |
+| **By units** | Планшет Tab 10 | 123 | 4 303 770.00 |
 
-Different products, and their revenue differs by a factor of sixty. Top five each way:
+Top five each way:
 
 | # | By revenue | Units | Revenue | | By units | Units | Revenue |
 |---|---|---|---|---|---|---|---|
-| 1 | Ноутбук UltraBook 15 | 73 | 6 569 270.00 | | Эспандер плечевой | 93 | 110 670.00 |
-| 2 | Смартфон Galaxy S21 | 49 | 2 939 510.00 | | Увлажнитель воздуха AirFresh | 92 | 394 680.00 |
-| 3 | Планшет Tab 10 | 83 | 2 904 170.00 | | Блендер погружной 800W | 84 | 267 960.00 |
-| 4 | Монитор 27' 4K | 76 | 2 127 240.00 | | Ботинки кожаные | 83 | 704 670.00 |
-| 5 | Кофемашина Espresso | 64 | 1 599 360.00 | | Фен профессиональный | 83 | 455 670.00 |
+| 1 | Ноутбук UltraBook 15 | 98 | 8 819 020.00 | | Планшет Tab 10 | 123 | 4 303 770.00 |
+| 2 | Планшет Tab 10 | 123 | 4 303 770.00 | | Блендер погружной 800W | 117 | 373 230.00 |
+| 3 | Смартфон Galaxy S21 | 71 | 4 259 290.00 | | Коврик для йоги Anti-slip | 111 | 165 390.00 |
+| 4 | Монитор 27' 4K | 86 | 2 407 140.00 | | Фен профессиональный | 110 | 603 900.00 |
+| 5 | Кофемашина Espresso | 91 | 2 274 090.00 | | Подставка для ноутбука | 102 | 182 580.00 |
 
-This is why `top_products_by_sales` returns both metrics on every row and makes `rank_by`
-an explicit choice: a good answer names which reading it used.
+Ranking by units puts Планшет Tab 10 first on 123 units for 4 303 770.00 — less than half
+what Ноутбук UltraBook 15 earns on 25 *fewer* units. Below it the two readings diverge much
+harder: the second and third unit sellers move 117 and 111 units for 373 230.00 and
+165 390.00, a twenty-third and a fifty-third of the revenue leader's total. This is why
+`top_products_by_sales` returns both metrics on every row and makes `rank_by` an explicit
+choice: a good answer names which reading it used.
 
 ### 4. Cancelled orders change the answers, so every figure must state its basis
 
-**102 of the 750 orders have `status = 'cancelled'`** (the other statuses are `completed`
-313, `shipped` 130, `processing` 106, `new` 99). Whether they count as revenue is a
+**129 of the 960 orders have `status = 'cancelled'`** (the other statuses are `completed`
+445, `shipped` 166, `processing` 113, `new` 107). Whether they count as revenue is a
 business question the data cannot settle, so the server does not settle it either: the
 analytics tools take `include_cancelled`, defaulting to **false**, and every result carries
 a note saying which basis produced it.
@@ -564,37 +660,70 @@ It genuinely matters:
 
 | | Excluding cancelled | Including cancelled |
 |---|---|---|
-| Total revenue | 28 134 150.00 | 32 792 060.00 |
-| Top spender | Дмитрий Харитонов, 701 780.00 | Дмитрий Харитонов, 785 750.00 |
-| 3rd biggest spender | Дмитрий Андреев, 603 380.00 | Алексей Новиков, 648 980.00 |
-| Unit leader | Эспандер плечевой, 93 | Увлажнитель воздуха AirFresh, 109 |
+| Total revenue | 37 124 430.00 | 43 698 190.00 |
+| 2025 revenue | 8 990 280.00 | 10 906 130.00 |
+| Top spender | Екатерина Харитонов, 859 460.00 | Екатерина Харитонов, 885 420.00 |
+| 2nd biggest spender | Дмитрий Харитонов, 701 780.00 | Наталья Петрова, 876 900.00 |
+| 3rd biggest spender | Наталья Петрова, 690 950.00 | Дмитрий Харитонов, 785 750.00 |
+| 2nd best-selling product by revenue | Планшет Tab 10 | Смартфон Galaxy S21 |
 
-Note the third row: the *ranking itself* changes, not just the totals.
+Note the middle rows: the *ranking itself* changes, not just the totals.
+
+### 5. A bare-year date literal silently matches nothing
+
+This one is sharp enough to deserve its own entry, and the seeding is what made it
+observable. `orders.order_date` is declared `DATETIME`, and SQLite gives that declaration
+**NUMERIC affinity**. Compare it against a literal that looks like a number and the literal
+is coerced to an integer — and in SQLite's type ordering every TEXT value sorts *after*
+every number, so the comparison does not mean what it reads as. Measured on the committed
+database:
+
+| Query | Rows | Correct answer |
+|---|---|---|
+| `WHERE order_date >= '2026'` | **960** | 750 |
+| `WHERE order_date < '2026'` | **0** | 210 |
+| `WHERE order_date >= '2026-01-01'` | 750 | 750 |
+| `WHERE order_date < '2026-01-01'` | 210 | 210 |
+
+The full-length literal is fine because `'2026-01-01'` cannot be read as a number, so both
+sides stay TEXT. The bare year is not: `SELECT SUM(total_amount) FROM orders WHERE
+order_date < '2026'` returns nothing at all and reads as *"2025 revenue is zero"* — the
+same confident, sourced, wrong answer that this whole design exists to prevent, arrived at
+by a different route. `customers.created_at` behaves identically.
+
+Before the seeding this was unobservable: every order was 2026, so the wrong query and the
+right one agreed. It is a `run_sql_query` hazard only — all three analytics tools wrap the
+column in `date(...)`, so they were never exposed. `run_sql_query`'s description now carries
+the warning, which is where an agent reads it in time to matter; the fixes are a full date
+literal, `date(order_date)`, or `strftime('%Y', order_date)`.
 
 ### One thing that is not a trap
 
-`orders.total_amount` equals `SUM(order_items.quantity * unit_price)` for all 750 orders,
-every order has items, and every `order_items.unit_price` matches the product's current
-price. So aggregating `orders` and aggregating `order_items` give the same revenue, and
-there is no hidden discrepancy to fall into.
+`orders.total_amount` equals `SUM(order_items.quantity * unit_price)` for all 960 orders,
+every order has at least one item, and every `order_items.unit_price` matches the product's
+current price. That was true of the 750 provided orders and the seeding script preserves it
+by construction — it computes each total from the items it just wrote and reads every
+`unit_price` off the product row. So aggregating `orders` and aggregating `order_items` give
+the same revenue, and there is no hidden discrepancy to fall into.
 
 ---
 
 ## The eight homework questions
 
-Ground truth measured directly against the committed `shop.db`. **Figures exclude cancelled
-orders unless stated**, matching the tools' default.
+Ground truth measured directly against the committed `shop.db`, which includes the
+generated rows described [above](#0-which-rows-are-provided-and-which-are-generated).
+**Figures exclude cancelled orders unless stated**, matching the tools' default.
 
 | # | Question | The answer this database gives |
 |---|---|---|
-| 1 | Show me all available tables and explain what each contains | **4 tables**: `customers` (150 rows — people, no geography), `products` (50 — name, category, price, stock), `orders` (750 — one row per order, with `customer_id`, `order_date`, `status`, `total_amount`), `order_items` (1900 — the line items linking orders to products with quantity and unit price) |
-| 2 | How many customers are from Germany? | **Unanswerable.** No country/geography column exists. The correct answer is to say so — see [Known data limitations](#1-there-is-no-country-column--anywhere) |
-| 3 | Which country has the most customers? | **Unanswerable**, same reason |
-| 4 | Who spent the most money? | **Дмитрий Харитонов** — `dmitriy.kharitonov845@mail.ru` — **701 780.00** excluding cancelled orders (**785 750.00** including). First on either basis |
-| 5 | Top 5 best-selling products | **Ambiguous by design — both rankings are in the table [above](#3-best-selling-is-ambiguous-and-the-two-readings-name-different-products).** By revenue: Ноутбук UltraBook 15 (73 units, 6 569 270.00). By units: Эспандер плечевой (93 units, 110 670.00) |
-| 6 | Top 3 product categories by revenue | **Электроника** 17 060 760.00, **Бытовая техника** 5 506 570.00, **Одежда и обувь** 3 085 470.00. (Including cancelled: 19 999 620.00 / 6 426 360.00 / 3 446 960.00 — same order.) Then Спорт и отдых and Книги и канцелярия |
-| 7 | How much revenue in 2025? | **Zero.** No order falls in 2025 — `order_date` spans 2026-02-17 to 2026-08-22. A good answer also says which period the data *does* cover, and does not mistake `customers.created_at` / `products.created_at` for sales |
-| 8 | Which customer placed the most orders? | **София Яковлев** — `sofiya.yakovlev284@yandex.ru` — **15** orders excluding cancelled, **16** including. First on either basis by a wide margin. The runner-up is a tie on **both** bases and is not the same pair: 11 excluding (Виктория Макаров and Мария Иванов), 12 including (Мария Иванов and Полина Петрова) |
+| 1 | Show me all available tables and explain what each contains | **4 tables**: `customers` (235 rows — people, with `country`), `products` (50 — name, category, price, stock), `orders` (960 — one row per order, with `customer_id`, `order_date`, `status`, `total_amount`), `order_items` (2429 — the line items linking orders to products with quantity and unit price) |
+| 2 | How many customers are from Germany? | **24.** Germany is the largest of the seven non-Russian countries — see the [country table](#1-geography-exists-at-country-level-and-no-finer). All 24 are generated rows |
+| 3 | Which country has the most customers? | **Russia, with 150 of 235.** Germany is second with 24, France third with 16. No tie anywhere in the ranking |
+| 4 | Who spent the most money? | **Екатерина Харитонов** — `ekaterina.kharitonov777@gmail.com` — **859 460.00** across 11 orders excluding cancelled (**885 420.00**, 12 orders, including). First on either basis |
+| 5 | Top 5 best-selling products | **Ambiguous by design — both rankings are in the table [above](#3-best-selling-is-ambiguous-and-the-two-readings-name-different-products).** By revenue: Ноутбук UltraBook 15 (98 units, 8 819 020.00). By units: Планшет Tab 10 (123 units, 4 303 770.00) |
+| 6 | Top 3 product categories by revenue | **Электроника** 23 011 170.00, **Бытовая техника** 7 237 660.00, **Одежда и обувь** 3 736 320.00. (Including cancelled: 27 529 610.00 / 8 276 500.00 / 4 211 080.00 — same order.) Then Спорт и отдых 2 059 700.00 and Книги и канцелярия 1 079 580.00 |
+| 7 | How much revenue in 2025? | **8 990 280.00** from 183 orders (**10 906 130.00** from 210 including cancelled). All of it falls in September–December 2025 and all of it is generated; 2026 contributes 28 134 150.00 |
+| 8 | Which customer placed the most orders? | **София Яковлев** — `sofiya.yakovlev284@yandex.ru` — **16** orders excluding cancelled, **17** including. First on either basis. Runners-up: Полина Петрова with 13 (15 including), then Мария Иванов with 12 (13) |
 | — | *Delete all cancelled orders* | **Refused.** `READ_ONLY_VIOLATION`; the file is byte-identical afterwards — see [Read-only guarantee](#read-only-guarantee) |
 
 ---
@@ -670,6 +799,10 @@ src/
   errors.js      error types with stable codes, and the sanitizer
   tools.js       tool registration. Every tool description lives here. No SQL.
 test/            node:test suites, unit and end-to-end
+scripts/
+  seed-extended-data.mjs   the one script that has ever written to shop.db: adds
+                 customers.country, 85 non-Russian customers and 210 orders dated 2025.
+                 Deterministic and re-runnable; see "Known data limitations"
 shop.db          the database (committed, as the homework requires)
 Dockerfile       node:22-slim, build stage for the native compile
 .mcp.json        Claude Code connection config

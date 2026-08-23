@@ -220,6 +220,11 @@ function columnsOf(db, ident) {
         }));
 }
 
+/**
+ * The first N rows in storage order. Cheap and generic — no ORDER BY, no OFFSET scan, works
+ * on any table on any schema — but that is exactly why they cannot be read as coverage, and
+ * why the caller attaches a warning whenever the table is bigger than the sample.
+ */
 function sampleRowsOf(db, ident, notes) {
     const raw = db.prepare(`SELECT * FROM ${ident} LIMIT ${SAMPLE_ROW_COUNT}`).all();
     const { rows, truncatedCells } = coerceRows(raw, SAMPLE_CELL_CHARS);
@@ -240,9 +245,13 @@ export class UnknownTableError extends InvalidArgument {}
 /**
  * Everything an agent needs to write correct SQL against one object without guessing:
  * the real columns, how they relate to other tables, what values a column is allowed to
- * hold, and three actual rows. The sample rows are the point — they are what let a model
- * conclude "there is no geography data here" or "these orders are all from 2026" instead
- * of inventing an answer.
+ * hold, and three actual rows.
+ *
+ * The sample rows show what the values look like — formats, units, whether a column is
+ * populated at all. They are the FIRST three rows in storage order, not a representative
+ * sample, so they cannot be read as coverage: `orders` samples as three 2026 rows while a
+ * fifth of the table is 2025. That is a live trap rather than a hypothetical one, so the
+ * caveat travels in `note` with the payload instead of only in the tool description.
  */
 export function describeTable(db, name) {
     const objects = listObjects(db);
@@ -280,6 +289,22 @@ export function describeTable(db, name) {
         );
     }
 
+    const sampleRows = isTable
+        ? safely(notes, 'sample rows', () => sampleRowsOf(db, ident, notes), [])
+        : [];
+    // Reading coverage off the first three rows is the failure this warning exists to stop:
+    // `orders` samples as three 2026 rows while a fifth of the table is 2025, so an agent
+    // asked about 2025 concludes "no such year" from a payload that never claimed to be a
+    // sample of the whole table. Suppressed when the sample IS the whole table.
+    if (sampleRows.length > 0 && row_count !== null && row_count > sampleRows.length) {
+        notes.push(
+            `sample_rows are the first ${sampleRows.length} rows in storage order out of ` +
+                `${row_count}, not a representative sample: do not infer date ranges, value ` +
+                'distributions or which years the table covers from them — use MIN/MAX or an ' +
+                'aggregate over the whole column instead'
+        );
+    }
+
     return {
         name,
         type: object.type,
@@ -289,7 +314,7 @@ export function describeTable(db, name) {
         check_constraints: isTable ? extractCheckConstraints(object.sql) : [],
         indexes: isTable ? safely(notes, 'indexes', () => indexes(db, ident), []) : [],
         sql: object.sql,
-        sample_rows: isTable ? safely(notes, 'sample rows', () => sampleRowsOf(db, ident, notes), []) : [],
+        sample_rows: sampleRows,
         ...(notes.length > 0 ? { note: notes.join('; ') } : {})
     };
 }
@@ -302,10 +327,10 @@ function mentions(sql, name) {
 }
 
 /**
- * Turns SQLite's diagnosis into a self-correcting one. "no such column: country" is already
+ * Turns SQLite's diagnosis into a self-correcting one. "no such column: city" is already
  * good, but on its own it leaves the agent free to try another guess; appending the columns
- * that DO exist, plus an explicit instruction not to substitute, is what converts the
- * missing-geography case from a hallucinated answer into an honest one.
+ * that DO exist, plus an explicit instruction not to substitute, is what converts a query
+ * for data this schema does not hold from a hallucinated answer into an honest one.
  *
  * Returns the error unchanged if the schema cannot be read — an enrichment failure must
  * never replace a real diagnosis with a worse one.

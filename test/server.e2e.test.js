@@ -26,10 +26,10 @@ test('list_tables reports the four shop tables with their row counts', async () 
 
         const counts = Object.fromEntries(toolJson(result).tables.map(t => [t.name, t.row_count]));
         assert.deepEqual(counts, {
-            customers: 150,
+            customers: 235,
             products: 50,
-            orders: 750,
-            order_items: 1900
+            orders: 960,
+            order_items: 2429
         });
     } finally {
         await client.close();

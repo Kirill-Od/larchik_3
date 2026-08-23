@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from './helpers.js';
 
-const CUSTOMER_COLUMNS = ['id', 'first_name', 'last_name', 'email', 'phone', 'created_at'];
+const CUSTOMER_COLUMNS = ['id', 'first_name', 'last_name', 'email', 'phone', 'created_at', 'country'];
 const TABLES = ['customers', 'products', 'orders', 'order_items'];
 
 async function failing(name, args) {
@@ -18,14 +18,15 @@ async function failing(name, args) {
 
 const sql = statement => failing('run_sql_query', { sql: statement });
 
-// F1. The whole point: the agent asks for a column that does not exist, and the refusal
-// hands back the columns that do, so it can conclude the data has no geography rather than
-// inventing "Germany: 12".
+// The whole point: the agent asks for a column that does not exist, and the refusal hands
+// back the columns that do, so it can say what the data cannot answer rather than inventing
+// a breakdown. `city` is the live case now that `country` has been seeded — the data records
+// which country a customer is in and nothing finer.
 test('a missing column is answered with the columns that do exist', async () => {
-    const message = await sql('SELECT country FROM customers');
+    const message = await sql('SELECT city FROM customers');
 
     assert.match(message, /SQL_ERROR/);
-    assert.match(message, /no such column: country/);
+    assert.match(message, /no such column: city/);
     for (const column of CUSTOMER_COLUMNS) {
         assert.match(message, new RegExp(`\\b${column}\\b`), `${column} missing from: ${message}`);
     }
@@ -83,7 +84,7 @@ test('no error message anywhere leaks a filesystem path or a stack frame', async
     const messages = [];
     try {
         const calls = [
-            ['run_sql_query', { sql: 'SELECT country FROM customers' }],
+            ['run_sql_query', { sql: 'SELECT city FROM customers' }],
             ['run_sql_query', { sql: 'SELECT * FROM nope' }],
             ['run_sql_query', { sql: "DELETE FROM orders WHERE status='cancelled'" }],
             ['run_sql_query', { sql: 'INSERT INTO customers (first_name) VALUES (\'x\')' }],

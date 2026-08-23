@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "seed": "node scripts/seed-extended-data.mjs",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

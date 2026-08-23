@@ -59,7 +59,7 @@ const PATH = /(?<![\w:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s"`<>\n\r][^"`<>\n\r]*/g
 
 /**
  * Strips anything filesystem-shaped and any stack frame. SQLite's own diagnostics are worth
- * forwarding word for word — "no such column: country" is exactly what the agent needs — so
+ * forwarding word for word — "no such column: city" is exactly what the agent needs — so
  * this has to remove paths without damaging the message around them.
  */
 export function sanitize(message) {
