@@ -401,7 +401,7 @@ anchor to a terminator that cannot occur mid-path, so a component may contain an
 all:
 
 ```
-/Users/kirio/Документы/моя папка/shop.db   ->  <database>
+/home/user/Документы/моя папка/shop.db   ->  <database>
 /a b c d/e f/shop.db                       ->  <database>
 C:\Users\Kirio\My Documents\shop.db        ->  <database>
 no such column: country                    ->  unchanged

@@ -37,8 +37,8 @@ const CALLS = [
 // the filename out of its open errors — so the input has to be constructed, or the test
 // passes while guarding nothing. The precondition assert below is what proves it was.
 test('a driver error carrying a filesystem path is scrubbed on every analytics tool', () => {
-    const leaky = 'unable to open database file /Users/kirio/private/shop.db\n    at Database.prepare (/x/y.js:1:1)';
-    assert.match(leaky, /\/Users\/kirio\/private/, 'the injected error must actually carry a path');
+    const leaky = 'unable to open database file /home/user/private/shop.db\n    at Database.prepare (/x/y.js:1:1)';
+    assert.match(leaky, /\/home\/user\/private/, 'the injected error must actually carry a path');
 
     const handlers = captureHandlers({
         prepare() {
