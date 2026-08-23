@@ -1,0 +1,20 @@
+# Never ship the host's build of better-sqlite3 into the image: the native binary is
+# built for the host's OS and Node version. The build stage compiles its own.
+node_modules/
+
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+
+# Development-only material; the image only needs to run the server.
+test/
+tasks/
+homework.md
+.claude/
+
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/

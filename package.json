@@ -1,0 +1,19 @@
+{
+  "name": "shop-db-mcp",
+  "version": "0.1.0",
+  "description": "Read-only MCP server exposing an SQLite online-shop database over stdio.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.3",
+    "zod": "^3.25.0"
+  }
+}

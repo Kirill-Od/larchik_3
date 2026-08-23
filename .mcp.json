@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "shop-db": {
+      "command": "node",
+      "args": ["${PWD}/src/index.js"],
+      "env": {
+        "SHOP_DB_PATH": "${PWD}/shop.db"
+      }
+    }
+  }
+}

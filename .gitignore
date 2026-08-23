@@ -1,0 +1,33 @@
+# Dependencies — restored by `npm ci`. better-sqlite3 contains a compiled binary that
+# is specific to the machine and Node version that built it, so it must never be committed.
+node_modules/
+
+# npm / build noise
+npm-debug.log*
+*.tsbuildinfo
+.npm/
+
+# Environment overrides. SHOP_DB_PATH belongs in the MCP client config, not in a file here.
+.env
+.env.*
+
+# OS cruft
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# NOT ignored, deliberately:
+#   shop.db      — the homework requires the database to ship with the project (§7).
+#   .mcp.json    — the Claude Code connection config is part of the deliverable (§7).
