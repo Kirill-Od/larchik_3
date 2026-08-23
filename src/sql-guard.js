@@ -14,9 +14,20 @@
  *                                        so L2 does catch this one.
  *
  * ATTACH of a *nonexistent* file creates nothing: SQLite opens an attached database with
- * the parent connection's readonly flag, so it is SQLITE_CANTOPEN. The threat on this path
- * is reading another database, not writing a new one, and for that class of statement this
- * module is the only thing standing there.
+ * the parent connection's readonly flag, so it is SQLITE_CANTOPEN. The threat is reading
+ * another database, not writing a new one.
+ *
+ * One honest qualification on ATTACH, from the task-12 capstone reverting one layer at a
+ * time. With this guard no-op'd the exfiltration *still* fails today — but not because
+ * anything guards it: runQuery reaches a statement only through columns() and iterate(),
+ * and better-sqlite3 throws on both for a statement that returns no rows, which is every
+ * ATTACH, every DDL and every PRAGMA-set ("The columns() method is only for statements
+ * that return data"). That is an accident of the paging code, not a layer, and it must not
+ * be relied on: it evaporates the first time anyone adds a .run() path for statements that
+ * return nothing, and it never covered the one write shape that does return rows —
+ * DELETE/INSERT/UPDATE ... RETURNING, measured with reader true. L3 is what is still
+ * standing on that day, and the capstone keeps its ATTACH and sqlite_temp_master
+ * assertions as the regression guard for exactly that change.
  *
  * It is a lexer, not a regex, and that is load-bearing in both directions: a comment or a
  * string literal must not be able to smuggle a verb in, and a literal that merely

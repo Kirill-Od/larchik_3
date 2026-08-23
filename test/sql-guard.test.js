@@ -211,6 +211,37 @@ test('an ordinary CTE is allowed', () => {
     allows('WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c LIMIT 3) SELECT * FROM c');
 });
 
+// Plan §6 case 37. RETURNING is the one write shape that returns rows, and that is what
+// makes it worth its own test: every other write dies on the current query path even with
+// this guard removed, because runQuery reaches statements through columns()/iterate() and
+// better-sqlite3 throws on both for a statement that returns nothing. That barrier is an
+// accident of the paging code rather than a layer — and RETURNING walks straight past it.
+// The capstone measured this shape, and no other, modifying the database file with L2 and
+// L3 both reverted. The verb scan already catches all three; pinning them here stops the
+// uniquely dangerous case from being covered only incidentally by the plain-mutation test.
+test('a RETURNING write is refused, the one write shape that returns rows', () => {
+    const forms = {
+        'DELETE FROM orders WHERE id = 1 RETURNING *': 'DELETE',
+        "INSERT INTO customers (first_name) VALUES ('x') RETURNING id": 'INSERT',
+        'UPDATE products SET price = 0 WHERE id = 1 RETURNING id': 'UPDATE'
+    };
+    for (const [sql, construct] of Object.entries(forms)) {
+        const err = refusal(sql);
+        // The verb list, not the opener allow-list, which reports the same construct for
+        // all three: only the reason says which rule refused.
+        assert.equal(err.reason, 'FORBIDDEN_VERB', `wrong reason for ${label(sql)}`);
+        assert.equal(err.construct, construct, `wrong construct for ${label(sql)}`);
+    }
+
+    // Behind a CTE the opener allow-list cannot rescue the refusal at all.
+    const cte = refusal(
+        'WITH x AS (SELECT id FROM orders) ' +
+            'DELETE FROM orders WHERE id IN (SELECT id FROM x) RETURNING *'
+    );
+    assert.equal(cte.reason, 'FORBIDDEN_VERB');
+    assert.equal(cte.construct, 'DELETE');
+});
+
 // Plan §6 cases 13-14. All PRAGMA is blocked, including the read-only ones: describe_table
 // covers the legitimate need, so the refusal has to say so or the agent just retries.
 test('PRAGMA is refused, and table_info is pointed at describe_table', () => {

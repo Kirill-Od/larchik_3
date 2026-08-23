@@ -19,21 +19,23 @@ import { startServer, toolJson } from './helpers.js';
  * connection's readonly flag, so `ATTACH DATABASE '<nonexistent>'` is SQLITE_CANTOPEN and
  * cannot create a file even with the guard entirely removed.
  *
- * Which assertion below actually guards which layer was measured, by reverting one
- * protection at a time in a scratch copy of the repo and re-running this file:
+ * Which protection each assertion below actually guards was measured, by reverting one
+ * protection at a time in a scratch copy of the whole repo and re-running this file:
  *
- *   - "refused by the guard, not by a deeper layer" and the admitted-attacks list go red
- *     with L3 alone disabled: 6 attacks are then answered normally and ~15 more are
- *     stopped by the engine instead, with a message that explains nothing.
+ *   - The admitted-attacks list and "refused by the guard, not by a deeper layer" go red
+ *     with L3 alone disabled: 6 attacks are then answered normally and the other 39 are
+ *     stopped by the engine instead, with a message that explains nothing to the agent.
+ *   - "the SHA-256 and byte size are unchanged" needs L3, L2 and L0 all gone before it
+ *     moves: with the guard, the stmt.readonly check and SQLITE_OPEN_READONLY reverted
+ *     together, `DELETE … RETURNING` empties the table and the hash changes.
  *   - "sqlite_temp_master is empty" and "the cross-database read never resolves" survive
- *     an L3-only revert, because runQuery calls `statement.columns()` before iterating and
- *     better-sqlite3 throws there for any statement that returns no rows — which is every
- *     ATTACH and every DDL. That is an accident of the paging code, not a safety layer, so
- *     these two assertions were verified against an L3+L2 revert with that call made
- *     lenient: the temp table then lands and `SELECT * FROM sec.creds` returns hunter2.
- *   - "the SHA-256 and byte size are unchanged" needs L0 gone as well: with L3, L2 and
- *     SQLITE_OPEN_READONLY all reverted, `DELETE … RETURNING` (which returns rows, so it
- *     survives the columns() call) empties the table and this assertion goes red.
+ *     an L3-only revert for a reason that is not a safety layer at all: runQuery only ever
+ *     calls `statement.columns()` and `statement.iterate()`, and better-sqlite3 throws on
+ *     both for a statement that returns no rows — which is every ATTACH and every DDL. So
+ *     they were verified by disabling L3 and adding the `statement.run()` path runQuery
+ *     does not have: the attachment then lands and `SELECT * FROM sec.creds` hands back
+ *     hunter2, and with L2 also gone the temp table appears in sqlite_temp_master. Both
+ *     assertions are regression guards for exactly that change.
  */
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
