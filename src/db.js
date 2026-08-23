@@ -16,9 +16,25 @@ const MAX_RESPONSE_CHARS = 262_144;
 // a runaway join is cut off long before a client gives up on the server.
 const DEFAULT_DEADLINE_MS = 5000;
 
-/** Opens the database read-only. SQLITE_OPEN_READONLY is the outermost safety layer. */
+/**
+ * Opens the database read-only. SQLITE_OPEN_READONLY is the outermost safety layer.
+ *
+ * The sqlite_master probe is not decoration: better-sqlite3 defers the header check, so a
+ * .sql dump, a CSV or a Git LFS pointer opens without complaint and only fails on first use.
+ * Without this, boot logs "ready" and every later call returns SQLITE_NOTADB with no hint at
+ * which setting is wrong. Touching the schema here turns the wrong file into a boot-time
+ * configuration problem, which is the one the operator can actually act on. An empty file is
+ * a valid empty database and passes, which is correct — it honestly has no tables.
+ */
 export function openDatabase(path) {
-    return new Database(path, { readonly: true });
+    const db = new Database(path, { readonly: true });
+    try {
+        db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+    } catch (err) {
+        db.close();
+        throw err;
+    }
+    return db;
 }
 
 /**

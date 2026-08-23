@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer, driveRaw } from './helpers.js';
@@ -75,4 +75,26 @@ test('the reason is logged once to stderr and stdout stays valid JSON-RPC', asyn
     assert.match(stderr, /SHOP_DB_PATH/, `the operator was not told why: ${stderr}`);
     const complaints = stderr.split('\n').filter(line => /could not be opened/i.test(line));
     assert.equal(complaints.length, 1, `logged ${complaints.length} times: ${stderr}`);
+});
+
+// The likeliest misconfiguration after a wrong path: SHOP_DB_PATH pointing at a .sql dump, a
+// CSV or a Git LFS pointer. better-sqlite3 opens these happily and only fails on first use,
+// so without a boot probe the operator sees "ready" and the agent sees driver internals.
+test('a file that is not a SQLite database is reported as a configuration problem', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'shop-db-mcp-'));
+    const notADatabase = join(directory, 'shop.db');
+    writeFileSync(notADatabase, '-- a SQL dump, not a database\nCREATE TABLE t (a TEXT);\n');
+
+    const client = await startServer({ dbPath: notADatabase });
+    try {
+        const result = await client.callTool({ name: 'list_tables', arguments: {} });
+        assert.equal(result.isError, true);
+
+        const message = result.content[0].text;
+        assert.match(message, /CONFIGURATION_ERROR/, message);
+        assert.match(message, /SHOP_DB_PATH/, message);
+        assert.ok(!message.includes('SQLITE_'), `driver internals leaked: ${message}`);
+    } finally {
+        await client.close();
+    }
 });
