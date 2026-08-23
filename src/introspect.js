@@ -1,5 +1,5 @@
 import { coerceRows } from './db.js';
-import { AppError, InvalidArgument, SqlError, sanitize } from './errors.js';
+import { InvalidArgument, SqlError, sanitize } from './errors.js';
 
 const quoteIdent = name => `"${name.replaceAll('"', '""')}"`;
 
@@ -337,8 +337,9 @@ export function enrichSqlError(err, db, sql) {
                 `${err.message}. This database contains: ${objects.map(o => o.name).join(', ')}`
             );
         }
-    } catch (enrichmentFailure) {
-        if (enrichmentFailure instanceof AppError) throw enrichmentFailure;
+    } catch {
+        // Deliberately swallowed: a failure to read the schema must never replace a real
+        // diagnosis with a worse one. The caller still gets SQLite's own message.
     }
 
     return err;

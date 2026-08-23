@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { QueryError } from './db.js';
+import { InvalidArgument, toToolResult } from './errors.js';
 
 /**
  * The columns the SQL below names. The grader may attach a different shop.db (F3), so
@@ -48,8 +48,7 @@ const MAX_ROWS = 100;
 
 function assertLimit(limit) {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_ROWS) {
-        throw new QueryError(
-            'INVALID_ARGUMENT',
+        throw new InvalidArgument(
             `limit must be a whole number from 1 to ${MAX_ROWS}; received ${limit}`
         );
     }
@@ -145,8 +144,7 @@ function assertDate(db, label, value) {
 
     const resolved = DATE_PATTERN.test(value) ? db.prepare('SELECT date(?) AS d').get(value).d : null;
     if (resolved !== value) {
-        throw new QueryError(
-            'INVALID_ARGUMENT',
+        throw new InvalidArgument(
             `${label} must be a real calendar date written as YYYY-MM-DD; received ` +
                 `"${value}"${resolved === null ? '' : `, which is not a date (SQLite reads it as ${resolved})`}`
         );
@@ -277,19 +275,18 @@ const asResult = value => ({
     structuredContent: value
 });
 
-// Same stopgap shape tools.js uses until task 10 gives errors a sanitizer of their own.
-const asError = message => ({ content: [{ type: 'text', text: message }], isError: true });
-
 /**
- * A bad limit or a bad date is the caller's to fix, so it comes back as a tool result it
- * can read and correct, not as a protocol error. The code is the stable part the model
- * pattern-matches on, which is why the shape matches run_sql_query's exactly.
+ * A bad limit or a bad date is the caller's to fix, so it comes back as a tool result it can
+ * read and correct, not as a protocol error. Failures go through the same toToolResult as
+ * the three core tools: sanitizing is unconditional, so it cannot depend on which tool
+ * failed, and routing through it is also what keeps a raw driver code from reaching the
+ * agent in place of the documented vocabulary.
  */
 function toolResult(produce) {
     try {
         return asResult(produce());
     } catch (err) {
-        return asError(`${err.code ?? 'ERROR'}: ${err.message}`);
+        return toToolResult(err);
     }
 }
 

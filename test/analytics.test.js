@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase } from '../src/db.js';
 import {
     probeCapabilities,
+    registerAnalyticsTools,
     revenueByPeriod,
     topCustomersBySpend,
     topProductsBySales
@@ -12,6 +13,60 @@ import { makeFixtureDb } from './helpers.js';
 
 const shop = openDatabase(fileURLToPath(new URL('../shop.db', import.meta.url)));
 const fixture = schemaSql => openDatabase(makeFixtureDb(schemaSql));
+
+// ------------------------------------------------------------ error sanitizing
+
+/**
+ * Registers the tools against a stub handle and hands back the raw handlers, so a failure
+ * can be driven through exactly the path an MCP call takes without a subprocess.
+ */
+function captureHandlers(db) {
+    const handlers = new Map();
+    registerAnalyticsTools({ registerTool: (name, _config, handler) => handlers.set(name, handler) }, { db });
+    return handlers;
+}
+
+const CALLS = [
+    ['top_customers_by_spend', {}],
+    ['top_products_by_sales', {}],
+    ['revenue_by_period', { group_by: 'year' }]
+];
+
+// Gate 6. Sanitization is unconditional per plan §4, so it cannot depend on which of the six
+// tools failed. Nothing these tools currently produce carries a path — better-sqlite3 leaves
+// the filename out of its open errors — so the input has to be constructed, or the test
+// passes while guarding nothing. The precondition assert below is what proves it was.
+test('a driver error carrying a filesystem path is scrubbed on every analytics tool', () => {
+    const leaky = 'unable to open database file /Users/kirio/private/shop.db\n    at Database.prepare (/x/y.js:1:1)';
+    assert.match(leaky, /\/Users\/kirio\/private/, 'the injected error must actually carry a path');
+
+    const handlers = captureHandlers({
+        prepare() {
+            throw new Error(leaky);
+        }
+    });
+
+    for (const [name, args] of CALLS) {
+        const result = handlers.get(name)(args);
+        const text = result.content[0].text;
+
+        assert.equal(result.isError, true, name);
+        assert.ok(!text.includes('/Users'), `${name} leaked a path: ${text}`);
+        assert.ok(!text.includes('private'), `${name} leaked a directory name: ${text}`);
+        assert.ok(!/\bat\s+\S+\(/.test(text), `${name} leaked a stack frame: ${text}`);
+        assert.match(text, /<database>/, `${name} did not route through the sanitizer: ${text}`);
+    }
+});
+
+// The same routing has to carry the stable code, not just the scrubbing: a raw SQLITE_* code
+// escaping to the agent is outside the vocabulary the README documents.
+test('a deliberate refusal keeps its code and its teaching text through the same path', () => {
+    const handlers = captureHandlers(shop);
+    const text = handlers.get('top_customers_by_spend')({ limit: 500 }).content[0].text;
+
+    assert.match(text, /^INVALID_ARGUMENT: /);
+    assert.match(text, /1 to 100/);
+});
 
 // ---------------------------------------------------------------- the probe
 

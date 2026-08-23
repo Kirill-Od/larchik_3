@@ -15,12 +15,6 @@ export class AppError extends Error {
     }
 }
 
-/**
- * Retained because analytics.js constructs errors by code. AppError is the real base; new
- * code should throw one of the specific classes below instead of naming a code by hand.
- */
-export class QueryError extends AppError {}
-
 export class ConfigurationError extends AppError {
     constructor(message) {
         super('CONFIGURATION_ERROR', message);
@@ -46,34 +40,37 @@ export class QueryTimeout extends AppError {
 }
 
 /**
+ * Anything that starts like a filesystem path, run to a terminator that genuinely cannot
+ * occur mid-path.
+ *
+ * The earlier version allow-listed what a component may contain, which is the wrong shape of
+ * rule: every leak found in review was a character nobody enumerated — a second space, an
+ * apostrophe, a bracket, Cyrillic, CJK. So this inverts it. A component may contain anything
+ * at all, including spaces, and the match ends only at a quote, an angle bracket or a line
+ * break. Over-scrubbing trailing prose is the deliberate direction to fail in: losing a few
+ * words of a diagnostic is recoverable, leaking a directory name is not.
+ *
+ * The lookbehind is what keeps `a/b`, `2026/08/23` and `http://example.com/foo/bar` intact —
+ * a separator preceded by a word character, a colon or another slash is not a path anchor.
+ * Requiring one non-space character after the anchor is what keeps `near "/": syntax error`
+ * intact.
+ */
+const PATH = /(?<![\w:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s"`<>\n\r][^"`<>\n\r]*/g;
+
+/**
  * Strips anything filesystem-shaped and any stack frame. SQLite's own diagnostics are worth
  * forwarding word for word — "no such column: country" is exactly what the agent needs — so
  * this has to remove paths without damaging the message around them.
  */
 export function sanitize(message) {
-    let out = String(message)
+    return String(message)
         .replace(/\n\s*at\s+.*/g, '')
-        .replace(/(?<![\w.])(?:[A-Za-z]:\\|\\\\)[^\s]*/g, PLACEHOLDER)
-        // One separator is enough: SHOP_DB_PATH=/shop.db is ordinary inside a container. The
-        // character class keeps `near "/": syntax error` intact and the lookbehind keeps
-        // 2026/08/23 and http:// from being mistaken for paths.
-        .replace(/(?<![\w:/])\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*/g, PLACEHOLDER);
-
-    // A path containing a space survives the pass above as a tail: "/tmp/my proj/shop.db"
-    // becomes "<database> proj/shop.db", which still leaks a directory name. Absorb
-    // slash-bearing tokens that directly follow the placeholder, repeatedly, so paths with
-    // several spaces collapse too. Requiring a slash inside the token is what stops ordinary
-    // prose after a path from being eaten.
-    let previous;
-    do {
-        previous = out;
-        out = out.replace(
-            /<database>(?:\s+[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/g,
-            PLACEHOLDER
-        );
-    } while (out !== previous);
-
-    return out.trim();
+        .replace(PATH, match => {
+            // Keep sentence punctuation that trails the path outside the placeholder.
+            const path = match.replace(/[\s.,;:!?]+$/, '');
+            return PLACEHOLDER + match.slice(path.length);
+        })
+        .trim();
 }
 
 /**
@@ -138,10 +135,40 @@ function remedyAdvice(err) {
     }
 }
 
+/**
+ * The complete set of codes an agent may receive, and the whole contract the README
+ * documents as stable. A driver code such as SQLITE_NOTADB is not one of them: it carries
+ * engine internals and no remedy the agent can act on.
+ *
+ * Anything unrecognized maps to INTERNAL_ERROR, deliberately and not to SQL_ERROR. Reporting
+ * a server-side fault as a query fault sends the agent to rewrite a query that was never the
+ * problem; it fails identically and rewrites again, burning every remaining turn. A code
+ * that names the wrong side of the boundary is worse than a code the caller has not seen
+ * before.
+ */
+const AGENT_FACING_CODES = new Set([
+    'READ_ONLY_VIOLATION',
+    'SQL_ERROR',
+    'INVALID_ARGUMENT',
+    'QUERY_TIMEOUT',
+    'CONFIGURATION_ERROR',
+    'INTERNAL_ERROR'
+]);
+
+const INTERNAL_ADVICE =
+    'This is a fault in the server, not in your request: rewriting the query will not help. ' +
+    'Report what you were trying to do rather than retrying';
+
 /** Converts any thrown value into the MCP tool result the agent sees. */
 export function toToolResult(err) {
-    const code = err?.code ?? 'INTERNAL_ERROR';
-    const advice = err?.remedy ? remedyAdvice(err) : null;
+    const code = AGENT_FACING_CODES.has(err?.code) ? err.code : 'INTERNAL_ERROR';
+
+    let advice = null;
+    if (err?.remedy) {
+        advice = remedyAdvice(err);
+    } else if (code === 'INTERNAL_ERROR') {
+        advice = INTERNAL_ADVICE;
+    }
     const message = advice ? `${err.message}. ${advice}` : String(err?.message ?? err);
 
     return {

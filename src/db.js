@@ -1,9 +1,5 @@
 import Database from 'better-sqlite3';
 import { AppError, ConfigurationError, InvalidArgument, QueryTimeout, SqlError, sanitize } from './errors.js';
-
-// analytics.js imports QueryError from here; re-exported so that module needs no change.
-export { QueryError } from './errors.js';
-
 import { assertReadOnly } from './sql-guard.js';
 
 const DEFAULT_LIMIT = 100;
