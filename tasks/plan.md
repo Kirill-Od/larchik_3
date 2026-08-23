@@ -120,8 +120,18 @@ ATTACH DATABASE '<nonexistent>' AS e;          -> SQLITE_CANTOPEN, no file creat
 So the readonly flag protects *this database file* and, contrary to the original finding,
 the filesystem too. What it does **not** stop is TEMP-schema DDL, `PRAGMA writable_schema`,
 and — the one that matters most — **reading any other SQLite file on disk through ATTACH**.
-The threat is exfiltration, not file creation. L3 remains load-bearing; only the reason
-changed. Response: `ATTACH`, `DETACH`, all `PRAGMA`, and all DDL are blocked in the SQL
+The threat is exfiltration, not file creation.
+
+**Corrected again by the task-12 capstone: "L3 is the only thing standing there" is too
+strong for the *current* code path.** `runQuery` calls `statement.columns()` and
+`statement.iterate()`, and better-sqlite3 throws on both for any statement returning no
+rows — which is every ATTACH, every DDL, and every PRAGMA-set. So with L3 fully disabled
+those attacks still fail, with `INTERNAL_ERROR: The columns() method is only for statements
+that return data`. **That is an accident of the paging code, not a safety layer**, and it
+would evaporate the day anyone adds a `.run()` path. It is the same class of mistake as the
+original "no new files" claim, one level deeper: a barrier that looks like defence but is a
+side effect. The capstone keeps the ATTACH and temp-table assertions as regression guards
+for exactly that future change. L3 remains load-bearing; only the reason changed. Response: `ATTACH`, `DETACH`, all `PRAGMA`, and all DDL are blocked in the SQL
 validator, and the safety suite must assert the *reachable* consequence — that an ATTACH of
 an **existing** file is refused and a cross-database read never resolves. Asserting "no new
 file appeared" tests something that cannot happen on this path and passes with the guard
@@ -511,6 +521,21 @@ expression, which analytical SQL is built on, so the scan pairs it against `CASE
 either from the verb set would be a real weakening; keeping either unconditionally would
 refuse ordinary queries.
 
+Beyond the original 36, added by the task-12 capstone:
+
+37. **`DELETE FROM orders WHERE id = 1 RETURNING *`** (and the `INSERT … RETURNING` /
+    `UPDATE … RETURNING` forms). This is **the one write shape that returns rows**, so it
+    is the only one that survives the accidental `columns()` barrier described in F4 —
+    the shortest path from a disabled guard to a modified database file. Verified: with L3
+    and L2 removed, the capstone's SHA-256 assertion goes red on this statement and no
+    other. Its absence from the original list was the most consequential gap in it.
+38. `SELECT randomblob(200000000)` — passes the guard legitimately (it is a read) and makes
+    the server allocate ~200 MB before L4 truncates the *output* to a marker. Bounded near
+    1 GB per value by SQLITE_MAX_LENGTH. **L4 caps what leaves the process, not what is
+    allocated inside it.** Documented as a residual in §7 rather than fixed: bounding it
+    means predicting which scalar functions allocate, which is whack-a-mole at a boundary
+    where a wrong guess refuses legitimate SQL.
+
 Allowed — the false-positive guards, which are what distinguish a lexer from a regex:
 22. `SELECT * FROM products WHERE name = 'DROP TABLE orders'`
 23. `SELECT * FROM products WHERE name = 'a;b'`
@@ -545,6 +570,9 @@ constants.
 - HTTP / SSE transport. stdio only, per the spec.
 - Auth, multi-tenancy, connection pooling, query result caching.
 - Generating shop.db from SQL — the binary is committed, which the spec permits.
+- Bounding in-process memory allocation. `SELECT randomblob(2e8)` allocates ~200 MB before
+  the output cap applies (§6 case 38); SQLITE_MAX_LENGTH bounds it near 1 GB per value.
+  Predicting which scalar functions allocate is whack-a-mole at a security boundary.
 - True query cancellation via a worker thread. The per-row deadline is the documented
   approximation; the residual (a query that materializes before its first row) is stated
   in the README rather than solved.

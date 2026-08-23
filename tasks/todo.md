@@ -113,7 +113,7 @@
       cap and the read-only refusal; describe_table's mentions confirming a column exists
       before querying it; and the initialize result's instructions is non-empty.
 
-- [ ] 12. Capstone: the database is byte-identical after a full attack run
+- [x] 12. Capstone: the database is byte-identical after a full attack run
       Deliverable: test/safety.e2e.test.js.
       Test: copy shop.db to a temp dir, point SHOP_DB_PATH at the copy, drive all 21
       adversarial statements from plan §6 through a live MCP client, and assert every call

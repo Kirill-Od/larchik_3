@@ -352,10 +352,27 @@ table-valued function behind an allowed opener) — is covered by `test/sql-guar
 and the refusals are asserted end-to-end through a live MCP client in
 `test/errors.e2e.test.js`.
 
+**`test/safety.e2e.test.js` is the capstone**, and it is the strongest evidence in the repo
+for the read-only requirement. It copies `shop.db` to a temp directory, drives **45 attack
+statements** through a live MCP client — plus two identifier-injection attempts aimed at
+`describe_table`, which reaches `PRAGMA table_info` without going through the SQL guard at
+all — and then asserts that:
+
+- every one was refused, **and refused by the guard** rather than by some deeper layer, so
+  the agent actually got an explanation it can act on;
+- the copy's **SHA-256 and byte size are unchanged**;
+- an `ATTACH` of an *existing* sibling database is refused and its rows never resolve — the
+  real threat here is reading some *other* SQLite file on disk, not creating one;
+- `sqlite_temp_master` is empty afterwards, proving no `CREATE TEMP TABLE` landed.
+
+It also drives nine queries that must still be **allowed**, because a server that refuses
+everything passes a refusal-only suite and still fails the homework.
+
 ### Errors that teach
 
-Failures come back as tool errors carrying a stable machine-readable code the model can
-pattern-match, plus a message written to be actionable rather than merely correct:
+Failures come back as tool errors carrying one of six stable machine-readable codes the
+model can pattern-match, plus a message written to be actionable rather than merely
+correct:
 
 | Code | When | What the message adds |
 |---|---|---|
@@ -364,13 +381,41 @@ pattern-match, plus a message written to be actionable rather than merely correc
 | `INVALID_ARGUMENT` | A parameter is out of range or malformed | States the accepted values |
 | `QUERY_TIMEOUT` | The query ran past the deadline | Explains how to narrow it |
 | `CONFIGURATION_ERROR` | The database could not be opened | Names `SHOP_DB_PATH` |
+| `INTERNAL_ERROR` | A fault on the server's side, not in the request | Says so explicitly: *"rewriting the query will not help — report what you were trying to do rather than retrying"* |
 
-No stack traces and no filesystem paths ever leave the process. Every message is passed
-through a sanitizer unconditionally, which strips `at …` stack frames and anything
-filesystem-shaped — including paths containing spaces, which naive stripping leaves a tail
-of — while keeping SQLite's own wording intact, so `near "/": syntax error` still reads
-correctly. Operator-facing detail, such as the reason the database could not be opened,
-goes to stderr, where the client shows it in its MCP log and the agent never sees it.
+Those six are the whole contract. Anything unrecognised — a raw driver code such as
+`SQLITE_NOTADB`, or a genuine bug in this server — becomes `INTERNAL_ERROR` rather than
+being folded into `SQL_ERROR`. That distinction is worth the extra code: labelling a
+server-side fault as a SQL error tells the agent its *query* was wrong, so it rewrites,
+fails identically, and rewrites again until its turns are gone. A code the agent has not
+seen before is far cheaper than one that points it at the wrong side of the boundary.
+
+No stack traces and no filesystem paths ever leave the process. All six tools funnel their
+failures through one function, so sanitising cannot depend on which tool failed: `at …`
+stack frames are stripped, and anything filesystem-shaped becomes `<database>`.
+
+The path rule is deliberately **not** an allow-list of the characters a path component may
+contain. That shape of rule leaks on every character nobody thought to enumerate — a
+second space, an apostrophe, a bracket, Cyrillic, CJK. Instead it matches from a path
+anchor to a terminator that cannot occur mid-path, so a component may contain anything at
+all:
+
+```
+/Users/kirio/Документы/моя папка/shop.db   ->  <database>
+/a b c d/e f/shop.db                       ->  <database>
+C:\Users\Kirio\My Documents\shop.db        ->  <database>
+no such column: country                    ->  unchanged
+near "/": syntax error                     ->  unchanged
+2026/08/23 and a/b                         ->  unchanged
+```
+
+**The trade-off, which you will notice:** the match is greedy to the end of the line, so
+prose *after* a path is absorbed with it — `tried /tmp/a/shop.db, then gave up` comes back
+as `tried <database>`. That is the deliberate direction to fail in. Losing a few words of a
+diagnostic is recoverable; leaking a directory name out of the process is not.
+
+Operator-facing detail, such as the reason the database could not be opened, also goes to
+stderr, where your client shows it in its MCP log and the agent never sees it.
 
 ---
 
@@ -549,7 +594,7 @@ orders unless stated**, matching the tools' default.
 | 5 | Top 5 best-selling products | **Ambiguous by design — both rankings are in the table [above](#3-best-selling-is-ambiguous-and-the-two-readings-name-different-products).** By revenue: Ноутбук UltraBook 15 (73 units, 6 569 270.00). By units: Эспандер плечевой (93 units, 110 670.00) |
 | 6 | Top 3 product categories by revenue | **Электроника** 17 060 760.00, **Бытовая техника** 5 506 570.00, **Одежда и обувь** 3 085 470.00. (Including cancelled: 19 999 620.00 / 6 426 360.00 / 3 446 960.00 — same order.) Then Спорт и отдых and Книги и канцелярия |
 | 7 | How much revenue in 2025? | **Zero.** No order falls in 2025 — `order_date` spans 2026-02-17 to 2026-08-22. A good answer also says which period the data *does* cover, and does not mistake `customers.created_at` / `products.created_at` for sales |
-| 8 | Which customer placed the most orders? | **София Яковлев** — `sofiya.yakovlev284@yandex.ru` — **15** orders excluding cancelled, **16** including. First on either basis by a wide margin; the runner-up is Мария Иванов with 11 / 12 (tied at 11 with Виктория Макаров on the excluding basis) |
+| 8 | Which customer placed the most orders? | **София Яковлев** — `sofiya.yakovlev284@yandex.ru` — **15** orders excluding cancelled, **16** including. First on either basis by a wide margin. The runner-up is a tie on **both** bases and is not the same pair: 11 excluding (Виктория Макаров and Мария Иванов), 12 including (Мария Иванов and Полина Петрова) |
 | — | *Delete all cancelled orders* | **Refused.** `READ_ONLY_VIOLATION`; the file is byte-identical afterwards — see [Read-only guarantee](#read-only-guarantee) |
 
 ---
@@ -575,9 +620,35 @@ fix and is out of scope here. `run_sql_query`'s own description tells the agent 
 before joining rather than to rely on the cut-off. In practice, on a database of this size
 nothing comes close.
 
+### The caps bound what leaves the process, not what is allocated inside it
+
+`SELECT randomblob(200000000)` is a legitimate read. It passes the guard correctly, and the
+output cap then truncates the result to a marker — but only *after* SQLite has allocated
+roughly 200 MB to build the value. The row cap, the response cap and the per-cell cap all
+bound what is serialised out to the agent; none of them bounds peak memory inside the
+process. SQLite's own `SQLITE_MAX_LENGTH` is the only ceiling, near 1 GB per value.
+
+This is left as a residual rather than fixed, because bounding it means predicting which
+scalar functions allocate, and a wrong guess refuses legitimate SQL at a security boundary.
+
+### One barrier in the capstone is an accident, not a layer
+
+Worth knowing if you change the query code. The capstone measured that `ATTACH` and every
+DDL statement fail *even with the SQL guard disabled* — but not because something is
+guarding them. `runQuery` reaches a statement through `columns()` and `iterate()`, and both
+throw for a statement that returns no rows, which is every `ATTACH` and every DDL. That is
+a property of the paging code, and it would evaporate the moment anyone added a `.run()`
+path.
+
+`DELETE … RETURNING` is the one write shape that *does* return rows, so it is the only one
+that gets past that accident — and the guard is what stops it. Do not read the capstone's
+green as evidence that the guard is redundant; read it as evidence that the guard is the
+only thing standing between a `.run()` path and a modified database.
+
 ### Also out of scope
 
 - Write access of any kind, including a confirm-first mutation path.
+- Bounding in-process memory allocation, per the residual above.
 - MCP Resources and Prompts — tools alone cover every requirement, and resource support is
   uneven across agent harnesses.
 - HTTP / SSE transport. stdio only, as specified.
